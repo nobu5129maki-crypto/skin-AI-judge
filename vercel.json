@@ -1,9 +1,6 @@
 {
   "version": 2,
-  "public": true,
   "buildCommand": "npm run build",
   "outputDirectory": ".",
-  "headers": [
-    {"source": "/(.*\\.svg)", "headers": [{"key": "Content-Type", "value": "image/svg+xml"}]}
-  ]
+  "framework": null
 }

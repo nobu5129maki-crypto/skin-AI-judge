@@ -41,15 +41,36 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
       .animate-in { animation: fadeIn 0.5s ease-out; }
+      .animate-spin { animation: spin 1s linear infinite; }
       @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
       .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
       body { -webkit-tap-highlight-color: transparent; }
     </style>
   </head>
   <body class="bg-slate-50 min-h-screen font-sans text-slate-900">
-    <div id="root"></div>
+    <div id="root">
+      <div id="loading" class="flex flex-col items-center justify-center min-h-screen gap-4 text-indigo-600">
+        <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+        <p class="font-medium">読み込み中...</p>
+      </div>
+    </div>
 
+    <script>
+      window.addEventListener('error', function(e) {
+        var loading = document.getElementById('loading');
+        if (loading) {
+          loading.innerHTML = '<div class="flex flex-col items-center justify-center min-h-screen gap-4 text-rose-600 p-4 text-center"><p class="font-bold">読み込みエラー</p><p class="text-sm">' + (e.message || 'スクリプトの読み込みに失敗しました') + '</p><button onclick="location.reload()" class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg">再読み込み</button></div>';
+        }
+      });
+      setTimeout(function() {
+        var loading = document.getElementById('loading');
+        if (loading && loading.querySelector('.animate-spin')) {
+          loading.innerHTML = '<div class="flex flex-col items-center justify-center min-h-screen gap-4 text-rose-600 p-4 text-center"><p class="font-bold">読み込みが遅れています</p><p class="text-sm">ネットワークを確認して再読み込みしてください</p><button onclick="location.reload()" class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg">再読み込み</button></div>';
+        }
+      }, 15000);
+    </script>
     <script type="text/babel" data-type="module">
       import React, { useState, useRef, useEffect, useCallback } from 'react';
       import { createRoot } from 'react-dom/client';
