@@ -272,30 +272,41 @@
           const values = sortedData.map(item => type === 'tone' ? item.toneScore : item.spotRatio);
           const labels = sortedData.map(item => item.chartDate);
           
-          const width = 300;
-          const height = 120;
-          const paddingX = 30;
-          const paddingY = 25;
+          const width = 320;
+          const height = 140;
+          const paddingLeft = 42;
+          const paddingRight = 20;
+          const paddingTop = 20;
+          const paddingBottom = 28;
+          const chartWidth = width - paddingLeft - paddingRight;
+          const chartHeight = height - paddingTop - paddingBottom;
           
-          const getX = (i) => paddingX + (i * (width - paddingX * 2) / (values.length - 1));
-          const getY = (val) => height - paddingY - (val / 100 * (height - paddingY * 2));
+          const getX = (i) => paddingLeft + (i * chartWidth / Math.max(values.length - 1, 1));
+          const getY = (val) => paddingTop + chartHeight - (val / 100 * chartHeight);
 
           const points = values.map((val, i) => `${getX(i)},${getY(val)}`).join(' ');
-          const color = type === 'tone' ? '#4f46e5' : '#ef4444'; 
+          const color = type === 'tone' ? '#4f46e5' : '#ef4444';
+          const yTicks = [0, 25, 50, 75, 100];
 
           return (
             <div className="w-full bg-white p-4 rounded-3xl border border-slate-100 mb-2 overflow-hidden shadow-sm">
               <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-4">
                 <TrendingUp size={12} /> {type === 'tone' ? '透明度推移' : 'シミ深刻度推移'}
               </h4>
-              <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-28 overflow-visible">
-                <line x1={paddingX} y1={getY(0)} x2={width-paddingX} y2={getY(0)} stroke="#f1f5f9" strokeWidth="1" />
-                <line x1={paddingX} y1={getY(100)} x2={width-paddingX} y2={getY(100)} stroke="#f1f5f9" strokeWidth="1" />
+              <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-32 overflow-visible">
+                {/* Y軸ラベル（パーセンテージ） */}
+                {yTicks.map((pct) => (
+                  <g key={pct}>
+                    <line x1={paddingLeft} y1={getY(pct)} x2={width - paddingRight} y2={getY(pct)} stroke="#f1f5f9" strokeWidth="1" strokeDasharray="2,2" />
+                    <text x={paddingLeft - 6} y={getY(pct) + 4} textAnchor="end" fontSize="9" fontWeight="600" fill="#64748b">{pct}%</text>
+                  </g>
+                ))}
+                {/* 折れ線グラフ */}
                 <polyline fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={points} />
                 {values.map((val, i) => (
                   <g key={i}>
                     <circle cx={getX(i)} cy={getY(val)} r="4" fill="white" stroke={color} strokeWidth="2.5" />
-                    <text x={getX(i)} y={height - 5} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#94a3b8">{labels[i]}</text>
+                    <text x={getX(i)} y={height - 8} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#64748b">{labels[i]}</text>
                   </g>
                 ))}
               </svg>
@@ -307,30 +318,29 @@
           <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 overflow-hidden relative">
             <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 gradient-bg rounded-lg flex items-center justify-center text-white overflow-hidden">
-                  <svg width="20" height="20" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center overflow-hidden shadow-lg bg-gradient-to-br from-indigo-600 via-violet-600 to-pink-500 border border-white/20">
+                  <svg width="22" height="22" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <defs>
                       <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style={{ stopColor: '#ffffff', stopOpacity: 1 }} />
-                        <stop offset="100%" style={{ stopColor: '#ffffff', stopOpacity: 0.9 }} />
+                        <stop offset="0%" style={{ stopColor: '#fef9c3', stopOpacity: 1 }} />
+                        <stop offset="100%" style={{ stopColor: '#fde047', stopOpacity: 0.95 }} />
                       </linearGradient>
                     </defs>
-                    <path d="M 16 9 Q 11 9 8.5 12.5 Q 7.5 15 8.5 17.5 Q 10 21 12.5 22.5 Q 15 23.5 16 23.5 Q 17 23.5 19.5 22.5 Q 22 21 23.5 17.5 Q 24.5 15 23.5 12.5 Q 21 9 16 9 Z" 
+                    <path d="M 16 8.5 Q 10.5 8.5 7.5 12.5 Q 6 15 7.5 17.5 Q 9.5 21 12 22.5 Q 14.5 24 16 24 Q 17.5 24 20 22.5 Q 22.5 21 24.5 17.5 Q 26 15 24.5 12.5 Q 21.5 8.5 16 8.5 Z" 
                           fill="url(#headerGrad)" 
-                          stroke="#ffffff" 
-                          strokeWidth="1.5" 
+                          stroke="rgba(255,255,255,0.9)" 
+                          strokeWidth="1.2" 
                           strokeLinecap="round" 
                           strokeLinejoin="round"/>
-                    <ellipse cx="13.5" cy="15" rx="1" ry="1.2" fill="#ffffff" opacity="0.95"/>
-                    <ellipse cx="18.5" cy="15" rx="1" ry="1.2" fill="#ffffff" opacity="0.95"/>
-                    <path d="M 14 19 Q 16 20 18 19" 
+                    <ellipse cx="13" cy="15" rx="1.2" ry="1.4" fill="#7c3aed" opacity="0.5"/>
+                    <ellipse cx="19" cy="15" rx="1.2" ry="1.4" fill="#7c3aed" opacity="0.5"/>
+                    <path d="M 13.5 19 Q 16 20.5 18.5 19" 
                           fill="none" 
-                          stroke="#ffffff" 
+                          stroke="#ec4899" 
                           strokeWidth="1.5" 
                           strokeLinecap="round" 
-                          opacity="0.9"/>
-                    <circle cx="16" cy="6" r="0.8" fill="#ffffff" opacity="0.9"/>
-                    <path d="M 16 5 L 16 7 M 15 6 L 17 6" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" opacity="0.9"/>
+                          opacity="0.8"/>
+                    <path d="M16 5.5 L17 7.5 L19.2 7.8 L17.5 9.2 L18 11.5 L16 10.2 L14 11.5 L14.5 9.2 L12.8 7.8 L15 7.5 Z" fill="#ec4899" opacity="0.95"/>
                   </svg>
                 </div>
                 <h1 className="text-lg font-black italic tracking-tighter">SKIN AI PRO</h1>
