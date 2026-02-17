@@ -5,8 +5,5 @@
   "outputDirectory": ".",
   "headers": [
     {"source": "/(.*\\.svg)", "headers": [{"key": "Content-Type", "value": "image/svg+xml"}]}
-  ],
-  "rewrites": [
-    {"source": "/((?!api/)(?!.*\\.(json|ico|png|jpg|jpeg|webp|xml)).*)", "destination": "/index.html"}
   ]
 }
