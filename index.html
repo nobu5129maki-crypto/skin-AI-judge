@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Skin Analyzer Pro</title>
+    <!-- Favicon and PWA Icons（ビルド時に生成される静的PNG） -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152.png" />
+    <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    <!-- iOS Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Skin AI Pro" />
+    <!-- Theme Colors -->
+    <meta name="theme-color" content="#6366f1" />
+    <meta name="msapplication-TileColor" content="#6366f1" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+    <!-- Android Chrome -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Skin AI Pro" />
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Lucide Icons via ESM -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.284.0"
+        }
+      }
+    </script>
+    <!-- Babel standalone -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      .animate-in { animation: fadeIn 0.5s ease-out; }
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+      .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
+      body { -webkit-tap-highlight-color: transparent; }
+    </style>
+  </head>
+  <body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+      import React, { useState, useRef, useEffect, useCallback } from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { 
+        Camera, RefreshCw, History, Shield, Activity, Trash2, 
+        ChevronRight, AlertCircle, VideoOff, Upload, TrendingUp, 
+        ArrowLeft, List, Sparkles, ArrowUpRight, ArrowDownRight 
+      } from 'lucide-react';
+
+      /** APIキーはVercel環境変数 GEMINI_API_KEY で管理（クライアントに露出しない） */
+      const API_BASE = "";
+
+      const App = () => {
+        const [view, setView] = useState('camera');
+        const [stream, setStream] = useState(null);
+        const [analyzing, setAnalyzing] = useState(false);
+        const [result, setResult] = useState(null);
+        const [history, setHistory] = useState([]);
+        const [isLoadingCamera, setIsLoadingCamera] = useState(false);
+        const [cameraError, setCameraError] = useState(null);
+        const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
+
+        const videoRef = useRef(null);
+        const canvasRef = useRef(null);
+        const fileInputRef = useRef(null);
+
+        // 履歴の読み込み
+        useEffect(() => {
+          const saved = localStorage.getItem('skin_analysis_history');
+          if (saved) {
+            try { setHistory(JSON.parse(saved)); } catch (e) { console.error(e); }
+          }
+        }, []);
+
+        const stopCamera = useCallback(() => {
+          if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            setStream(null);
+          }
+        }, [stream]);
+
+        const startCamera = async () => {
+          setIsLoadingCamera(true);
+          setCameraError(null);
+          try {
+            const res = await navigator.mediaDevices.getUserMedia({ 
+              video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } 
+            });
+            setStream(res);
+          } catch (err) {
+            setCameraError("カメラの起動に失敗しました。設定を確認してください。");
+          } finally {
+            setIsLoadingCamera(false);
+          }
+        };
+
+        useEffect(() => {
+          if (stream && videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        }, [stream, view]);
+
+        const capturePhoto = () => {
+          const video = videoRef.current;
+          const canvas = canvasRef.current;
+          if (!video || !canvas) return;
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, 0, 0);
+          analyzeSkin(canvas.toDataURL('image/png'));
+        };
+
+        const handleFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => analyzeSkin(event.target.result);
+            reader.readAsDataURL(file);
+          }
+        };
+
+        const analyzeSkin = async (imageData) => {
+          setAnalyzing(true);
+          setView('result');
+          stopCamera();
+
+          const systemPrompt = `
+            あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONで返答してください：
+            1. spotRatio: 0-100 (シミ・くすみの深刻度)
+            2. toneScore: 0-100 (肌の透明感・明るさ)
+            3. spotBreakdown: { "老人性色素斑": %, "肝斑": %, "そばかす": %, "炎症後色素沈着": % }
+            4. analysisDetail: 専門的な解析結果。
+            5. advice: 具体的なスキンケア、成分、生活習慣のアドバイス。
+          `;
+
+          try {
+            const base64Image = imageData.split(',')[1];
+            if (!base64Image) {
+              throw new Error("INVALID_IMAGE");
+            }
+            
+            const fetchWithRetry = async (retries = 5, delay = 1000) => {
+              const res = await fetch(`${API_BASE}/api/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ 
+                    parts: [
+                      { text: "この肌画像を精密に解析してください。" },
+                      { inlineData: { mimeType: "image/png", data: base64Image } }
+                    ] 
+                  }],
+                  systemInstruction: { parts: [{ text: systemPrompt }] },
+                  generationConfig: { responseMimeType: "application/json" }
+                })
+              });
+              
+              const resData = await res.json();
+              
+              if (!res.ok) {
+                const errMsg = resData?.error?.message || resData?.error?.status || "APIエラー";
+                const errStatus = resData?.error?.status || "";
+                const err = new Error(errMsg);
+                err.status = res.status;
+                err.statusText = errStatus;
+                if (retries > 0 && (res.status === 429 || res.status >= 500)) {
+                  await new Promise(r => setTimeout(r, delay));
+                  return fetchWithRetry(retries - 1, delay * 2);
+                }
+                throw err;
+              }
+              
+              if (!resData?.candidates?.[0]?.content?.parts?.[0]?.text) {
+                const blockReason = resData?.candidates?.[0]?.finishReason || "不明";
+                throw new Error(blockReason === "SAFETY" ? "SAFETY_BLOCK" : "EMPTY_RESPONSE");
+              }
+              return resData;
+            };
+
+            const data = await fetchWithRetry();
+            const analysis = JSON.parse(data.candidates[0].content.parts[0].text);
+            const now = new Date();
+            const newResult = { 
+              ...analysis, 
+              id: Date.now(), 
+              displayDate: now.toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), 
+              chartDate: `${now.getMonth() + 1}/${now.getDate()}`,
+              image: imageData 
+            };
+            
+            setResult(newResult);
+            const updatedHistory = [newResult, ...history].slice(0, 30);
+            setHistory(updatedHistory);
+            localStorage.setItem('skin_analysis_history', JSON.stringify(updatedHistory));
+          } catch (e) {
+            let errorMsg = "解析中にエラーが発生しました。";
+            if (e?.status === 401 || e?.status === 403) {
+              errorMsg = "APIキーが無効です。Vercelの環境変数 GEMINI_API_KEY を確認してください。";
+            } else if (e?.status === 429 || e?.message?.includes("RESOURCE_EXHAUSTED") || e?.message?.includes("quota")) {
+              errorMsg = "リクエスト制限に達しました。1〜2分待ってから再試行してください。";
+            } else if (e?.status === 404) {
+              errorMsg = "指定のAIモデルが見つかりません。モデル名の設定を確認してください。";
+            } else if (e?.status === 400 || e?.message?.includes("INVALID_ARGUMENT")) {
+              errorMsg = "リクエスト形式に問題があります。画像を選び直して再試行してください。";
+            } else if (e?.message === "SAFETY_BLOCK") {
+              errorMsg = "画像の内容により解析をブロックされました。別の画像でお試しください。";
+            } else if (e?.message?.includes("CONFIGURATION_ERROR") || e?.message?.includes("APIキーが未設定")) {
+              errorMsg = "APIキーが未設定です。Vercelの環境変数 GEMINI_API_KEY を設定してください。";
+            } else if (e?.message === "INVALID_IMAGE" || e?.message === "EMPTY_RESPONSE") {
+              errorMsg = "画像の読み込みに失敗しました。別の画像で再試行してください。";
+            } else if (e?.message?.includes("Failed to fetch") || e?.message?.includes("NetworkError")) {
+              errorMsg = "ネットワークエラーです。接続を確認して再試行してください。";
+            } else if (e instanceof SyntaxError || e?.message?.includes("JSON")) {
+              errorMsg = "AIの応答形式に問題がありました。再試行してください。";
+            } else {
+              errorMsg = "解析中にエラーが発生しました。時間を置いて再試行してください。";
+            }
+            setResult({ error: errorMsg, lastImage: imageData });
+          } finally {
+            setAnalyzing(false);
+          }
+        };
+
+        const deleteHistory = (id, e) => {
+          e.stopPropagation();
+          const filtered = history.filter(h => h.id !== id);
+          setHistory(filtered);
+          localStorage.setItem('skin_analysis_history', JSON.stringify(filtered));
+        };
+
+        // スコア推移グラフ (SVGによる詳細な描画)
+        const TrendChart = ({ data, type }) => {
+          if (!data || data.length < 2) return null;
+          
+          const sortedData = [...data].reverse(); // 古い順
+          const values = sortedData.map(item => type === 'tone' ? item.toneScore : item.spotRatio);
+          const labels = sortedData.map(item => item.chartDate);
+          
+          const width = 300;
+          const height = 120;
+          const paddingX = 30;
+          const paddingY = 25;
+          
+          const getX = (i) => paddingX + (i * (width - paddingX * 2) / (values.length - 1));
+          const getY = (val) => height - paddingY - (val / 100 * (height - paddingY * 2));
+
+          const points = values.map((val, i) => `${getX(i)},${getY(val)}`).join(' ');
+          const color = type === 'tone' ? '#4f46e5' : '#ef4444'; 
+
+          return (
+            <div className="w-full bg-white p-4 rounded-3xl border border-slate-100 mb-2 overflow-hidden shadow-sm">
+              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-4">
+                <TrendingUp size={12} /> {type === 'tone' ? '透明度推移' : 'シミ深刻度推移'}
+              </h4>
+              <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-28 overflow-visible">
+                <line x1={paddingX} y1={getY(0)} x2={width-paddingX} y2={getY(0)} stroke="#f1f5f9" strokeWidth="1" />
+                <line x1={paddingX} y1={getY(100)} x2={width-paddingX} y2={getY(100)} stroke="#f1f5f9" strokeWidth="1" />
+                <polyline fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={points} />
+                {values.map((val, i) => (
+                  <g key={i}>
+                    <circle cx={getX(i)} cy={getY(val)} r="4" fill="white" stroke={color} strokeWidth="2.5" />
+                    <text x={getX(i)} y={height - 5} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#94a3b8">{labels[i]}</text>
+                  </g>
+                ))}
+              </svg>
+            </div>
+          );
+        };
+
+        return (
+          <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 overflow-hidden relative">
+            <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 gradient-bg rounded-lg flex items-center justify-center text-white overflow-hidden">
+                  <svg width="20" height="20" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0.9" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M 16 9 Q 11 9 8.5 12.5 Q 7.5 15 8.5 17.5 Q 10 21 12.5 22.5 Q 15 23.5 16 23.5 Q 17 23.5 19.5 22.5 Q 22 21 23.5 17.5 Q 24.5 15 23.5 12.5 Q 21 9 16 9 Z" 
+                          fill="url(#headerGrad)" 
+                          stroke="#ffffff" 
+                          strokeWidth="1.5" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round"/>
+                    <ellipse cx="13.5" cy="15" rx="1" ry="1.2" fill="#ffffff" opacity="0.95"/>
+                    <ellipse cx="18.5" cy="15" rx="1" ry="1.2" fill="#ffffff" opacity="0.95"/>
+                    <path d="M 14 19 Q 16 20 18 19" 
+                          fill="none" 
+                          stroke="#ffffff" 
+                          strokeWidth="1.5" 
+                          strokeLinecap="round" 
+                          opacity="0.9"/>
+                    <circle cx="16" cy="6" r="0.8" fill="#ffffff" opacity="0.9"/>
+                    <path d="M 16 5 L 16 7 M 15 6 L 17 6" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" opacity="0.9"/>
+                  </svg>
+                </div>
+                <h1 className="text-lg font-black italic tracking-tighter">SKIN AI PRO</h1>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                  <Camera size={20} />
+                </button>
+                <button onClick={() => { stopCamera(); setView('history'); }} className={`p-2.5 rounded-xl transition-all ${view === 'history' || view === 'detail' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                  <History size={20} />
+                </button>
+              </div>
+            </header>
+
+            <main className="flex-1 overflow-y-auto p-6 pb-24">
+              {view === 'camera' && (
+                <div className="animate-in space-y-6">
+                  {!stream && !isLoadingCamera ? (
+                    <div className="py-12 space-y-8 text-center">
+                      <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mx-auto shadow-inner border-4 border-white">
+                        <Camera className="text-indigo-600" size={40} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-black mb-2 tracking-tight">肌の状態をチェック</h2>
+                        <p className="text-slate-400 text-sm leading-relaxed px-6">AIがシミ、くすみ、透明感を解析し<br/>最適なケアプランを作成します</p>
+                      </div>
+                      <div className="grid gap-4 pt-4">
+                        <button onClick={startCamera} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 hover:scale-[1.02] active:scale-95 transition-all">
+                          カメラを起動する
+                        </button>
+                        <div className="grid grid-cols-2 gap-4">
+                          <button onClick={() => setView('history')} className="flex flex-col items-center justify-center py-6 bg-white rounded-2xl font-bold border border-slate-100 hover:bg-slate-50 transition-all">
+                            <History size={24} className="mb-2 text-indigo-500" />
+                            <span className="text-xs">履歴を見る</span>
+                          </button>
+                          <button onClick={() => fileInputRef.current.click()} className="flex flex-col items-center justify-center py-6 bg-white rounded-2xl font-bold border border-slate-100 hover:bg-slate-50 transition-all">
+                            <Upload size={24} className="mb-2 text-indigo-500" />
+                            <span className="text-xs">写真を選択</span>
+                          </button>
+                        </div>
+                      </div>
+                      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                    </div>
+                  ) : (
+                    <div className="space-y-8 animate-in">
+                      <div className="relative overflow-hidden rounded-[3rem] shadow-2xl border-4 border-white aspect-[3/4] bg-slate-900">
+                        {cameraError ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-white">
+                            <VideoOff size={48} className="mb-4 text-rose-400" />
+                            <p className="text-sm opacity-80">{cameraError}</p>
+                            <button onClick={startCamera} className="mt-6 px-8 py-3 bg-white text-slate-900 rounded-full font-bold">再試行</button>
+                          </div>
+                        ) : (
+                          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                        )}
+                        {isLoadingCamera && (
+                          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center">
+                            <RefreshCw className="animate-spin text-white" size={32} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-center gap-6">
+                        <button onClick={capturePhoto} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
+                        <button onClick={() => { stopCamera(); setStream(null); }} className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors">キャンセル</button>
+                      </div>
+                    </div>
+                  )}
+                  <canvas ref={canvasRef} className="hidden" />
+                </div>
+              )}
+
+              {view === 'result' && (
+                <div className="animate-in space-y-6">
+                  {analyzing ? (
+                    <div className="py-40 text-center space-y-6">
+                      <RefreshCw className="animate-spin text-indigo-600 mx-auto" size={48} />
+                      <div className="space-y-2">
+                        <p className="text-xl font-black">AI解析中...</p>
+                        <p className="text-slate-400 text-xs px-12">画像のピクセル単位でシミの分布を<br/>専門的にスキャンしています</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-6 pb-12">
+                      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-8">
+                        {result?.error ? (
+                          <div className="p-8 text-center space-y-6">
+                            <AlertCircle className="text-rose-500 mx-auto" size={48} />
+                            <p className="text-rose-600 font-bold">{result.error}</p>
+                            <div className="flex flex-col gap-3">
+                              {result.lastImage && (
+                                <button onClick={() => { setResult(null); analyzeSkin(result.lastImage); }} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg hover:bg-indigo-700 active:scale-[0.98] transition-all">
+                                  再試行する
+                                </button>
+                              )}
+                              <button onClick={() => setView('camera')} className="text-indigo-600 font-bold underline">カメラに戻る</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex gap-4 items-center">
+                              <img src={result?.image} className="w-20 h-20 object-cover rounded-2xl ring-4 ring-indigo-50 shadow-sm" />
+                              <div>
+                                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">{result?.displayDate}</p>
+                                <h2 className="text-2xl font-black tracking-tight">解析完了</h2>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100">
+                                <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度スコア <ArrowUpRight size={10}/></p>
+                                <p className="text-4xl font-black text-indigo-600 leading-none">{result?.toneScore}</p>
+                              </div>
+                              <div className="bg-rose-50 p-5 rounded-3xl border border-rose-100">
+                                <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ深刻度 <ArrowDownRight size={10}/></p>
+                                <p className="text-4xl font-black text-rose-600 leading-none">{result?.spotRatio}%</p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-4">
+                              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><List size={14}/> シミの内訳（推測値）</h3>
+                              {result?.spotBreakdown && Object.entries(result.spotBreakdown).map(([name, val]) => (
+                                <div key={name}>
+                                  <div className="flex justify-between text-[11px] font-bold mb-1.5 text-slate-600">
+                                    <span>{name}</span>
+                                    <span>{val}%</span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-indigo-500 transition-all duration-1000 ease-out" style={{ width: `${val}%` }}></div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                              <h4 className="font-black text-xs mb-2 flex items-center gap-2 text-indigo-600 uppercase tracking-widest">
+                                <Activity size={16}/> 専門的診断
+                              </h4>
+                              <p className="text-sm leading-relaxed text-slate-700 font-medium">{result?.analysisDetail}</p>
+                            </div>
+
+                            <div className="p-6 gradient-bg text-white rounded-[2rem] shadow-xl shadow-indigo-100">
+                              <h4 className="font-black text-sm mb-3 flex items-center gap-2">
+                                <Shield size={16}/> AI アドバイス
+                              </h4>
+                              <p className="text-sm leading-relaxed opacity-95 font-medium whitespace-pre-wrap">{result?.advice}</p>
+                            </div>
+                          </>
+                        )}
+                        <button onClick={() => setView('camera')} className="w-full py-4 border-2 border-slate-100 rounded-2xl font-bold text-slate-400 hover:bg-slate-50 transition">新しい診断へ</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {view === 'history' && (
+                <div className="animate-in space-y-6">
+                  <div className="flex justify-between items-end mb-4">
+                    <h2 className="text-2xl font-black tracking-tight">診断履歴</h2>
+                  </div>
+
+                  {history.length >= 2 && (
+                    <div className="space-y-2">
+                      <TrendChart data={history} type="tone" />
+                      <TrendChart data={history} type="spot" />
+                    </div>
+                  )}
+
+                  {history.length === 0 ? (
+                    <div className="py-24 text-center space-y-4 text-slate-300">
+                      <History size={48} className="mx-auto opacity-50" />
+                      <p className="font-bold">履歴がまだありません</p>
+                      <button onClick={() => setView('camera')} className="text-indigo-600 font-bold underline">今すぐ診断する</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {history.map(item => (
+                        <div key={item.id} onClick={() => { setSelectedHistoryItem(item); setView('detail'); }} className="bg-white p-4 rounded-3xl flex items-center gap-4 shadow-sm border border-slate-100 hover:shadow-md transition-all cursor-pointer group">
+                          <img src={item.image} className="w-14 h-14 rounded-xl object-cover ring-2 ring-slate-50" />
+                          <div className="flex-1">
+                            <p className="text-[10px] font-black text-slate-300 uppercase mb-0.5">{item.displayDate}</p>
+                            <div className="flex gap-4">
+                              <span className="text-xs font-bold text-indigo-600">透明度: {item.toneScore}</span>
+                              <span className="text-xs font-bold text-rose-500">シミ: {item.spotRatio}%</span>
+                            </div>
+                          </div>
+                          <button onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-200 hover:text-rose-500 transition-colors">
+                            <Trash2 size={18} />
+                          </button>
+                          <ChevronRight size={16} className="text-slate-300 group-hover:translate-x-1 transition-transform" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {view === 'detail' && selectedHistoryItem && (
+                <div className="animate-in space-y-6 pb-12">
+                  <button onClick={() => setView('history')} className="flex items-center gap-2 text-slate-400 font-bold hover:text-indigo-600 transition">
+                    <ArrowLeft size={20} /> 履歴に戻る
+                  </button>
+                  <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-sm border border-slate-100">
+                    <img src={selectedHistoryItem.image} className="w-full aspect-[3/4] object-cover" />
+                    <div className="p-8 space-y-8">
+                      <div>
+                        <p className="text-[10px] font-bold text-indigo-600 tracking-widest uppercase mb-1">{selectedHistoryItem.displayDate}</p>
+                        <h2 className="text-3xl font-black tracking-tight">詳細分析レポート</h2>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-5 bg-indigo-50 rounded-3xl border border-indigo-100">
+                          <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度 <ArrowUpRight size={10}/></p>
+                          <p className="text-4xl font-black text-indigo-600 leading-none">{selectedHistoryItem.toneScore}</p>
+                        </div>
+                        <div className="p-5 bg-rose-50 rounded-3xl border border-rose-100">
+                          <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ指標 <ArrowDownRight size={10}/></p>
+                          <p className="text-4xl font-black text-rose-600 leading-none">{selectedHistoryItem.spotRatio}%</p>
+                        </div>
+                      </div>
+
+                      <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
+                        <h4 className="font-black text-xs mb-3 flex items-center gap-2 text-indigo-600 uppercase tracking-widest"><Activity size={16}/> 専門的診断</h4>
+                        <p className="text-sm leading-relaxed text-slate-700 font-medium">{selectedHistoryItem.analysisDetail}</p>
+                      </div>
+
+                      <div className="p-6 gradient-bg text-white rounded-3xl shadow-lg shadow-indigo-100">
+                        <h4 className="font-black text-sm mb-3 flex items-center gap-2"><Shield size={16}/> AI推奨ケア</h4>
+                        <p className="text-sm leading-relaxed opacity-95 font-medium whitespace-pre-wrap">{selectedHistoryItem.advice}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </main>
+          </div>
+        );
+      };
+
+      const root = createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+  </body>
+</html>
