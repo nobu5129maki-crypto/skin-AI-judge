@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Skin Analyzer Pro</title>
+    <title>AI肌解析プロ</title>
     <!-- Favicon and PWA Icons（ビルド時に生成される静的PNG） -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -17,14 +17,14 @@
     <!-- iOS Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Skin AI Pro" />
+    <meta name="apple-mobile-web-app-title" content="AI肌解析プロ" />
     <!-- Theme Colors -->
     <meta name="theme-color" content="#6366f1" />
     <meta name="msapplication-TileColor" content="#6366f1" />
     <meta name="msapplication-config" content="/browserconfig.xml" />
     <!-- Android Chrome -->
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="Skin AI Pro" />
+    <meta name="application-name" content="AI肌解析プロ" />
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React & Lucide Icons via ESM -->
@@ -77,7 +77,8 @@
       import { 
         Camera, RefreshCw, History, Shield, Activity, Trash2, 
         ChevronRight, AlertCircle, VideoOff, Upload, TrendingUp, 
-        ArrowLeft, List, Sparkles, ArrowUpRight, ArrowDownRight 
+        ArrowLeft, List, Sparkles, ArrowUpRight, ArrowDownRight, 
+        Sun, ChevronDown, Check, X 
       } from 'lucide-react';
 
       /** APIキーはVercel環境変数 GEMINI_API_KEY で管理（クライアントに露出しない） */
@@ -92,6 +93,7 @@
         const [isLoadingCamera, setIsLoadingCamera] = useState(false);
         const [cameraError, setCameraError] = useState(null);
         const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
+        const [showLightingTips, setShowLightingTips] = useState(false);
 
         const videoRef = useRef(null);
         const canvasRef = useRef(null);
@@ -161,12 +163,12 @@
           stopCamera();
 
           const systemPrompt = `
-            あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONで返答してください：
+            あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONで返答してください。analysisDetail と advice は必ず日本語で記述してください。
             1. spotRatio: 0-100 (シミ・くすみの深刻度)
             2. toneScore: 0-100 (肌の透明感・明るさ)
             3. spotBreakdown: { "老人性色素斑": %, "肝斑": %, "そばかす": %, "炎症後色素沈着": % }
-            4. analysisDetail: 専門的な解析結果。
-            5. advice: 具体的なスキンケア、成分、生活習慣のアドバイス。
+            4. analysisDetail: 専門的な解析結果（日本語で）。
+            5. advice: 具体的なスキンケア、成分、生活習慣のアドバイス（日本語で）。
           `;
 
           try {
@@ -264,6 +266,49 @@
           localStorage.setItem('skin_analysis_history', JSON.stringify(filtered));
         };
 
+        // 照明条件ヒント（開閉可能）
+        const LightingTipsCard = () => (
+          <div className="bg-white/90 backdrop-blur rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+            <button
+              onClick={() => setShowLightingTips(!showLightingTips)}
+              className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <Sun className="text-amber-500" size={20} />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-700 text-sm">より正確な解析のための照明のコツ</p>
+                  <p className="text-xs text-slate-400">タップして詳細を表示</p>
+                </div>
+              </div>
+              <ChevronDown size={20} className={`text-slate-400 transition-transform ${showLightingTips ? 'rotate-180' : ''}`} />
+            </button>
+            {showLightingTips && (
+              <div className="px-5 pb-5 pt-0 space-y-4 border-t border-slate-100">
+                <div>
+                  <p className="text-xs font-black text-emerald-600 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Check size={14} /> おすすめの条件</p>
+                  <ul className="space-y-1.5 text-sm text-slate-600">
+                    <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">•</span>窓際の<strong>自然光</strong>（直射日光は避ける）</li>
+                    <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">•</span>顔の<strong>正面</strong>から均等に光が当たる</li>
+                    <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">•</span>カーテン越しの<strong>やわらかい拡散光</strong></li>
+                    <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">•</span>明るさが<strong>均一</strong>な環境</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider mb-2 flex items-center gap-1.5"><X size={14} /> 避けたい条件</p>
+                  <ul className="space-y-1.5 text-sm text-slate-600">
+                    <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">•</span><strong>逆光</strong>（背後から光が当たる）</li>
+                    <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">•</span><strong>直射日光</strong>（強い影ができる）</li>
+                    <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">•</span>暗い部屋や<strong>蛍光灯のみ</strong>の環境</li>
+                    <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">•</span>顔の片側だけ明るい<strong>片側照明</strong></li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
         // スコア推移グラフ (SVGによる詳細な描画)
         const TrendChart = ({ data, type }) => {
           if (!data || data.length < 2) return null;
@@ -343,7 +388,7 @@
                     <path d="M16 5.5 L17 7.5 L19.2 7.8 L17.5 9.2 L18 11.5 L16 10.2 L14 11.5 L14.5 9.2 L12.8 7.8 L15 7.5 Z" fill="#ec4899" opacity="0.95"/>
                   </svg>
                 </div>
-                <h1 className="text-lg font-black italic tracking-tighter">SKIN AI PRO</h1>
+                <h1 className="text-lg font-black italic tracking-tighter">AI肌解析プロ</h1>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
@@ -367,6 +412,7 @@
                         <h2 className="text-2xl font-black mb-2 tracking-tight">肌の状態をチェック</h2>
                         <p className="text-slate-400 text-sm leading-relaxed px-6">AIがシミ、くすみ、透明感を解析し<br/>最適なケアプランを作成します</p>
                       </div>
+                      <LightingTipsCard />
                       <div className="grid gap-4 pt-4">
                         <button onClick={startCamera} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 hover:scale-[1.02] active:scale-95 transition-all">
                           カメラを起動する
@@ -406,6 +452,7 @@
                         <button onClick={capturePhoto} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
                         <button onClick={() => { stopCamera(); setStream(null); }} className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors">キャンセル</button>
                       </div>
+                      <LightingTipsCard />
                     </div>
                   )}
                   <canvas ref={canvasRef} className="hidden" />
