@@ -84,6 +84,21 @@
       /** APIキーはVercel環境変数 GEMINI_API_KEY で管理（クライアントに露出しない） */
       const API_BASE = "";
 
+      /** AIが "60%" のように返すと UI で "60%%" になるため、表示・バー幅用に数値へ正規化する */
+      function parsePercentNumber(val) {
+        if (val == null || val === "") return 0;
+        if (typeof val === "number" && Number.isFinite(val)) {
+          return Math.min(100, Math.max(0, val));
+        }
+        const n = parseFloat(
+          String(val)
+            .replace(/%/g, "")
+            .replace(/,/g, "")
+            .trim()
+        );
+        return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+      }
+
       const App = () => {
         const [view, setView] = useState('camera');
         const [stream, setStream] = useState(null);
@@ -209,9 +224,10 @@
 
           const systemPrompt = `
             あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONで返答してください。analysisDetail と advice は必ず日本語で記述してください。
-            1. spotRatio: 0-100 (シミ・くすみの深刻度)
-            2. toneScore: 0-100 (肌の透明感・明るさ)
-            3. spotBreakdown: { "老人性色素斑": %, "肝斑": %, "そばかす": %, "炎症後色素沈着": % }
+            数値フィールドには必ず0〜100の「数値のみ」を入れ、%記号や文字列（例: "60%"）は絶対に使わないこと。
+            1. spotRatio: シミ・くすみの深刻度（0-100の数値）
+            2. toneScore: 肌の透明感・明るさ（0-100の数値）
+            3. spotBreakdown: { "老人性色素斑": 数値, "肝斑": 数値, "そばかす": 数値, "炎症後色素沈着": 数値 } — 各キーは0-100の数値。シミタイプごとの寄与度の目安。合計が100になる必要はない。
             4. analysisDetail: 専門的な解析結果（日本語で）。
             5. advice: 具体的なスキンケア、成分、生活習慣のアドバイス（日本語で）。
           `;
@@ -271,6 +287,19 @@
 
             const data = await fetchWithRetry();
             const analysis = JSON.parse(data.candidates[0].content.parts[0].text);
+            if (analysis.spotRatio != null) {
+              analysis.spotRatio = parsePercentNumber(analysis.spotRatio);
+            }
+            if (analysis.toneScore != null) {
+              analysis.toneScore = parsePercentNumber(analysis.toneScore);
+            }
+            if (analysis.spotBreakdown && typeof analysis.spotBreakdown === "object") {
+              const nextBreakdown = {};
+              for (const [k, v] of Object.entries(analysis.spotBreakdown)) {
+                nextBreakdown[k] = parsePercentNumber(v);
+              }
+              analysis.spotBreakdown = nextBreakdown;
+            }
             const now = new Date();
             const newResult = { 
               ...analysis, 
@@ -370,7 +399,9 @@
           if (!data || data.length < 2) return null;
           
           const sortedData = [...data].reverse(); // 古い順
-          const values = sortedData.map(item => type === 'tone' ? item.toneScore : item.spotRatio);
+          const values = sortedData.map((item) =>
+            parsePercentNumber(type === "tone" ? item.toneScore : item.spotRatio)
+          );
           const labels = sortedData.map(item => item.chartDate);
           
           const width = 320;
@@ -554,27 +585,31 @@
                             <div className="grid grid-cols-2 gap-4">
                               <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100">
                                 <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度スコア <ArrowUpRight size={10}/></p>
-                                <p className="text-4xl font-black text-indigo-600 leading-none">{result?.toneScore}</p>
+                                <p className="text-4xl font-black text-indigo-600 leading-none">{parsePercentNumber(result?.toneScore)}</p>
                               </div>
                               <div className="bg-rose-50 p-5 rounded-3xl border border-rose-100">
                                 <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ深刻度 <ArrowDownRight size={10}/></p>
-                                <p className="text-4xl font-black text-rose-600 leading-none">{result?.spotRatio}%</p>
+                                <p className="text-4xl font-black text-rose-600 leading-none">{parsePercentNumber(result?.spotRatio)}%</p>
                               </div>
                             </div>
 
                             <div className="space-y-4">
                               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><List size={14}/> シミの内訳（推測値）</h3>
-                              {result?.spotBreakdown && Object.entries(result.spotBreakdown).map(([name, val]) => (
+                              <p className="text-[10px] text-slate-400 leading-snug -mt-2 mb-1">各項目は相対的な寄与度の目安です。合計が100%になるとは限りません。</p>
+                              {result?.spotBreakdown && Object.entries(result.spotBreakdown).map(([name, val]) => {
+                                const pct = parsePercentNumber(val);
+                                return (
                                 <div key={name}>
                                   <div className="flex justify-between text-[11px] font-bold mb-1.5 text-slate-600">
                                     <span>{name}</span>
-                                    <span>{val}%</span>
+                                    <span>{pct}%</span>
                                   </div>
                                   <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-indigo-500 transition-all duration-1000 ease-out" style={{ width: `${val}%` }}></div>
+                                    <div className="h-full bg-indigo-500 transition-all duration-1000 ease-out" style={{ width: `${pct}%` }}></div>
                                   </div>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
 
                             <div className="p-5 bg-slate-50 rounded-3xl border border-slate-100">
@@ -626,8 +661,8 @@
                           <div className="flex-1">
                             <p className="text-[10px] font-black text-slate-300 uppercase mb-0.5">{item.displayDate}</p>
                             <div className="flex gap-4">
-                              <span className="text-xs font-bold text-indigo-600">透明度: {item.toneScore}</span>
-                              <span className="text-xs font-bold text-rose-500">シミ: {item.spotRatio}%</span>
+                              <span className="text-xs font-bold text-indigo-600">透明度: {parsePercentNumber(item.toneScore)}</span>
+                              <span className="text-xs font-bold text-rose-500">シミ: {parsePercentNumber(item.spotRatio)}%</span>
                             </div>
                           </div>
                           <button onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-200 hover:text-rose-500 transition-colors">
@@ -657,11 +692,11 @@
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-5 bg-indigo-50 rounded-3xl border border-indigo-100">
                           <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度 <ArrowUpRight size={10}/></p>
-                          <p className="text-4xl font-black text-indigo-600 leading-none">{selectedHistoryItem.toneScore}</p>
+                          <p className="text-4xl font-black text-indigo-600 leading-none">{parsePercentNumber(selectedHistoryItem.toneScore)}</p>
                         </div>
                         <div className="p-5 bg-rose-50 rounded-3xl border border-rose-100">
                           <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ指標 <ArrowDownRight size={10}/></p>
-                          <p className="text-4xl font-black text-rose-600 leading-none">{selectedHistoryItem.spotRatio}%</p>
+                          <p className="text-4xl font-black text-rose-600 leading-none">{parsePercentNumber(selectedHistoryItem.spotRatio)}%</p>
                         </div>
                       </div>
 
