@@ -135,17 +135,62 @@
           }
         }, [stream, view]);
 
-        const capturePhoto = () => {
+        /** スマホの高解像度PNGは数MBになりやすく、API/プロキシのボディ上限やモバイルのメモリで失敗するため縮小してJPEG化する */
+        const prepareImageForApi = (dataUrl) =>
+          new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              const maxSide = 1280;
+              let w = img.naturalWidth;
+              let h = img.naturalHeight;
+              if (!w || !h) return reject(new Error("INVALID_IMAGE"));
+              const scale = Math.min(1, maxSide / Math.max(w, h));
+              w = Math.round(w * scale);
+              h = Math.round(h * scale);
+              const c = document.createElement("canvas");
+              c.width = w;
+              c.height = h;
+              c.getContext("2d").drawImage(img, 0, 0, w, h);
+              const out = c.toDataURL("image/jpeg", 0.85);
+              const base64 = out.split(",")[1];
+              if (!base64) return reject(new Error("INVALID_IMAGE"));
+              resolve({ mimeType: "image/jpeg", base64 });
+            };
+            img.onerror = () => reject(new Error("INVALID_IMAGE"));
+            img.src = dataUrl;
+          });
+
+        const capturePhoto = async () => {
           const video = videoRef.current;
           const canvas = canvasRef.current;
           if (!video || !canvas) return;
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
+          // モバイルではメタデータ前に撮影すると videoWidth が 0 のままになることがある
+          for (let i = 0; i < 40 && (!video.videoWidth || !video.videoHeight); i++) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          if (!video.videoWidth || !video.videoHeight) {
+            setCameraError("カメラの準備が完了していません。数秒待ってから撮影してください。");
+            return;
+          }
+          const vw = video.videoWidth;
+          const vh = video.videoHeight;
+          const maxSide = 1280;
+          const scale = Math.min(1, maxSide / Math.max(vw, vh));
+          const tw = Math.round(vw * scale);
+          const th = Math.round(vh * scale);
+          canvas.width = vw;
+          canvas.height = vh;
+          const ctx = canvas.getContext("2d");
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
           ctx.drawImage(video, 0, 0);
-          analyzeSkin(canvas.toDataURL('image/png'));
+          const small = document.createElement("canvas");
+          small.width = tw;
+          small.height = th;
+          small.getContext("2d").drawImage(canvas, 0, 0, tw, th);
+          // 巨大PNGを避け、解析側の prepareImageForApi も軽くする
+          analyzeSkin(small.toDataURL("image/jpeg", 0.85));
         };
 
         const handleFileUpload = (e) => {
@@ -172,10 +217,8 @@
           `;
 
           try {
-            const base64Image = imageData.split(',')[1];
-            if (!base64Image) {
-              throw new Error("INVALID_IMAGE");
-            }
+            const { mimeType: imageMime, base64: base64Image } =
+              await prepareImageForApi(imageData);
             
             const fetchWithRetry = async (retries = 5, delay = 20000) => {
               const res = await fetch(`${API_BASE}/api/analyze`, {
@@ -185,7 +228,7 @@
                   contents: [{ 
                     parts: [
                       { text: "この肌画像を精密に解析してください。" },
-                      { inlineData: { mimeType: "image/png", data: base64Image } }
+                      { inlineData: { mimeType: imageMime, data: base64Image } }
                     ] 
                   }],
                   systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -249,6 +292,8 @@
               errorMsg = "リクエスト制限に達しました。1〜2分待ってから再試行してください。";
             } else if (e?.status === 404) {
               errorMsg = "指定のAIモデルが見つかりません。モデル名の設定を確認してください。";
+            } else if (e?.status === 413) {
+              errorMsg = "画像データが大きすぎます。別の画像でお試しください。";
             } else if (e?.status === 400 || e?.message?.includes("INVALID_ARGUMENT")) {
               errorMsg = "リクエスト形式に問題があります。画像を選び直して再試行してください。";
             } else if (e?.message === "SAFETY_BLOCK") {
