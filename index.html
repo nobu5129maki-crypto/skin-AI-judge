@@ -177,7 +177,7 @@
               throw new Error("INVALID_IMAGE");
             }
             
-            const fetchWithRetry = async (retries = 5, delay = 1000) => {
+            const fetchWithRetry = async (retries = 5, delay = 20000) => {
               const res = await fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -189,7 +189,7 @@
                     ] 
                   }],
                   systemInstruction: { parts: [{ text: systemPrompt }] },
-                  generationConfig: { responseMimeType: "application/json" }
+                  generationConfig: { responseMimeType: "application/json", maxOutputTokens: 1024 }
                 })
               });
               
@@ -202,8 +202,19 @@
                 err.status = res.status;
                 err.statusText = errStatus;
                 if (retries > 0 && (res.status === 429 || res.status >= 500)) {
-                  await new Promise(r => setTimeout(r, delay));
-                  return fetchWithRetry(retries - 1, delay * 2);
+                  // Gemini 側の `retry-after` に従う（なければ指数バックオフ）。
+                  const retryAfterHeader = res.headers?.get?.("retry-after");
+                  const retryAfterFromJson = resData?.error?.rateLimit?.retryAfter;
+                  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : Number(retryAfterFromJson);
+
+                  const suggestedDelayMs =
+                    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                      ? retryAfterSeconds * 1000
+                      : delay;
+
+                  await new Promise(r => setTimeout(r, suggestedDelayMs));
+                  // 次回は伸ばしておく（同じ 1 分窓内で踏み続けないため）。
+                  return fetchWithRetry(retries - 1, Math.min(suggestedDelayMs * 2, 120000));
                 }
                 throw err;
               }
