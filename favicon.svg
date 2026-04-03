@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Skin AI">
+  <defs>
+    <linearGradient id="f-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="0.45" stop-color="#1e1b4b"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="f-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.5" stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+    <linearGradient id="f-scan" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#67e8f9" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#a5b4fc" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="f-soft" x="-0.2" y="-0.2" width="1.4" height="1.4">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#f-bg)"/>
+  <rect x="40" y="40" width="432" height="432" rx="96" fill="none" stroke="url(#f-ring)" stroke-width="3" opacity="0.45"/>
+  <circle cx="256" cy="228" r="118" fill="none" stroke="url(#f-ring)" stroke-width="10" stroke-linecap="round" opacity="0.95"/>
+  <circle cx="256" cy="228" r="72" fill="none" stroke="url(#f-ring)" stroke-width="4" opacity="0.35"/>
+  <path d="M128 312 Q192 268 256 300 T384 296" fill="none" stroke="url(#f-ring)" stroke-width="12" stroke-linecap="round" opacity="0.55" filter="url(#f-soft)"/>
+  <path d="M120 380 L392 132" stroke="url(#f-scan)" stroke-width="36" stroke-linecap="round"/>
+  <circle cx="256" cy="228" r="14" fill="#67e8f9" opacity="0.9"/>
+  <circle cx="256" cy="228" r="6" fill="#0f172a" opacity="0.5"/>
+</svg>

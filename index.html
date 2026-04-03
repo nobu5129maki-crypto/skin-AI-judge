@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI肌解析プロ</title>
-    <!-- Favicon and PWA Icons（ビルド時に生成される静的PNG） -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Favicon and PWA Icons（npm run generate-icons で生成） -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -19,8 +20,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="AI肌解析プロ" />
     <!-- Theme Colors -->
-    <meta name="theme-color" content="#6366f1" />
-    <meta name="msapplication-TileColor" content="#6366f1" />
+    <meta name="theme-color" content="#1e1b4b" />
+    <meta name="msapplication-TileColor" content="#1e1b4b" />
     <meta name="msapplication-config" content="/browserconfig.xml" />
     <!-- Android Chrome -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -44,7 +45,7 @@
       .animate-spin { animation: spin 1s linear infinite; }
       @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+      .gradient-bg { background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 42%, #0e7490 100%); }
       .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
       body { -webkit-tap-highlight-color: transparent; }
     </style>
@@ -52,7 +53,7 @@
   <body class="bg-slate-50 min-h-screen font-sans text-slate-900">
     <div id="root">
       <div id="loading" class="flex flex-col items-center justify-center min-h-screen gap-4 text-indigo-600">
-        <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+        <div class="w-12 h-12 border-4 border-indigo-900/15 border-t-indigo-500 rounded-full animate-spin"></div>
         <p class="font-medium">読み込み中...</p>
       </div>
     </div>
@@ -77,7 +78,7 @@
       import { 
         Camera, RefreshCw, History, Shield, Activity, Trash2, 
         ChevronRight, AlertCircle, VideoOff, Upload, TrendingUp, 
-        ArrowLeft, List, Sparkles, ArrowUpRight, ArrowDownRight, 
+        ArrowLeft, List, ArrowUpRight, ArrowDownRight, 
         Sun, ChevronDown, Check, X 
       } from 'lucide-react';
 
@@ -448,34 +449,12 @@
 
         return (
           <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 overflow-hidden relative">
-            <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center overflow-hidden shadow-lg bg-gradient-to-br from-indigo-600 via-violet-600 to-pink-500 border border-white/20">
-                  <svg width="22" height="22" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                      <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style={{ stopColor: '#fef9c3', stopOpacity: 1 }} />
-                        <stop offset="100%" style={{ stopColor: '#fde047', stopOpacity: 0.95 }} />
-                      </linearGradient>
-                    </defs>
-                    <path d="M 16 8.5 Q 10.5 8.5 7.5 12.5 Q 6 15 7.5 17.5 Q 9.5 21 12 22.5 Q 14.5 24 16 24 Q 17.5 24 20 22.5 Q 22.5 21 24.5 17.5 Q 26 15 24.5 12.5 Q 21.5 8.5 16 8.5 Z" 
-                          fill="url(#headerGrad)" 
-                          stroke="rgba(255,255,255,0.9)" 
-                          strokeWidth="1.2" 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round"/>
-                    <ellipse cx="13" cy="15" rx="1.2" ry="1.4" fill="#7c3aed" opacity="0.5"/>
-                    <ellipse cx="19" cy="15" rx="1.2" ry="1.4" fill="#7c3aed" opacity="0.5"/>
-                    <path d="M 13.5 19 Q 16 20.5 18.5 19" 
-                          fill="none" 
-                          stroke="#ec4899" 
-                          strokeWidth="1.5" 
-                          strokeLinecap="round" 
-                          opacity="0.8"/>
-                    <path d="M16 5.5 L17 7.5 L19.2 7.8 L17.5 9.2 L18 11.5 L16 10.2 L14 11.5 L14.5 9.2 L12.8 7.8 L15 7.5 Z" fill="#ec4899" opacity="0.95"/>
-                  </svg>
+            <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100/80">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg shadow-slate-900/25 ring-1 ring-slate-200/80 shrink-0">
+                  <img src="/favicon.svg" alt="" width={40} height={40} className="w-full h-full object-cover" />
                 </div>
-                <h1 className="text-lg font-black italic tracking-tighter">AI肌解析プロ</h1>
+                <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">AI肌解析プロ</h1>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
@@ -492,8 +471,8 @@
                 <div className="animate-in space-y-6">
                   {!stream && !isLoadingCamera ? (
                     <div className="py-12 space-y-8 text-center">
-                      <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mx-auto shadow-inner border-4 border-white">
-                        <Camera className="text-indigo-600" size={40} />
+                      <div className="w-24 h-24 rounded-[1.75rem] flex items-center justify-center mx-auto shadow-inner border border-slate-200/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900">
+                        <Camera className="text-cyan-300/90" size={36} strokeWidth={1.75} />
                       </div>
                       <div>
                         <h2 className="text-2xl font-black mb-2 tracking-tight">肌の状態をチェック</h2>
