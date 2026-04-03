@@ -46,10 +46,42 @@ export default async function handler(req, res) {
       }
     );
 
-    const data = await geminiRes.json();
+    let data;
+    try {
+      data = await geminiRes.json();
+    } catch {
+      data = { error: { message: await geminiRes.text().catch(() => "API_ERROR") } };
+    }
+
+    // Rate limit / quota 系の原因切り分け用に、Gemini が返すヘッダをそのまま返す。
+    // これによりフロント側で `retry-after` に応じた待機をできるようにする。
+    const geminiHeaders = Object.fromEntries(geminiRes.headers.entries());
+    const retryAfter = geminiHeaders["retry-after"];
+    const xRateLimitHeaders = Object.fromEntries(
+      Object.entries(geminiHeaders).filter(([k]) => k.toLowerCase().startsWith("x-ratelimit-"))
+    );
 
     if (!geminiRes.ok) {
-      return res.status(geminiRes.status).json(data);
+      if (retryAfter) {
+        res.setHeader("retry-after", retryAfter);
+      }
+
+      // 既存のレスポンス形を壊さないため、error 部分だけ補足する。
+      const originalError =
+        data && typeof data === "object" && data.error && typeof data.error === "object"
+          ? data.error
+          : { message: data?.error?.message || data?.message || "API_ERROR" };
+
+      return res.status(geminiRes.status).json({
+        ...data,
+        error: {
+          ...originalError,
+          rateLimit: {
+            retryAfter,
+            headers: xRateLimitHeaders,
+          },
+        },
+      });
     }
 
     return res.status(200).json(data);
