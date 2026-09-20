@@ -2,6 +2,12 @@
  * Vercel Serverless Function: Gemini API プロキシ
  * APIキーはサーバー側の環境変数 GEMINI_API_KEY に格納（クライアントに露出しない）
  */
+const MODEL_CANDIDATES = [
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+];
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
@@ -33,24 +39,29 @@ export default async function handler(req, res) {
       });
     }
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          systemInstruction: systemInstruction || undefined,
-          generationConfig: generationConfig || { responseMimeType: "application/json" },
-        }),
-      }
-    );
+    const payload = JSON.stringify({
+      contents,
+      systemInstruction: systemInstruction || undefined,
+      generationConfig: generationConfig || { responseMimeType: "application/json" },
+    });
 
+    // 先頭モデルが 429（無料枠上限）/ 404（提供終了）/ 503（混雑）のときは予備モデルで再試行する
+    let geminiRes;
     let data;
-    try {
-      data = await geminiRes.json();
-    } catch {
-      data = { error: { message: await geminiRes.text().catch(() => "API_ERROR") } };
+    for (let i = 0; i < MODEL_CANDIDATES.length; i++) {
+      const model = MODEL_CANDIDATES[i];
+      geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: payload }
+      );
+      try {
+        data = await geminiRes.json();
+      } catch {
+        data = { error: { message: await geminiRes.text().catch(() => "API_ERROR") } };
+      }
+      const retryable = [429, 404, 503].includes(geminiRes.status);
+      if (geminiRes.ok || !retryable || i === MODEL_CANDIDATES.length - 1) break;
+      console.warn(`[api/analyze] model=${model} status=${geminiRes.status} -> 次のモデルで再試行`);
     }
 
     // Rate limit / quota 系の原因切り分け用に、Gemini が返すヘッダをそのまま返す。

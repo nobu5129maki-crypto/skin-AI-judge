@@ -110,6 +110,8 @@
         const [cameraError, setCameraError] = useState(null);
         const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
         const [showLightingTips, setShowLightingTips] = useState(false);
+        // 混雑時のリトライ待ちなど、解析中に利用者へ見せる補足メッセージ
+        const [analyzeStatus, setAnalyzeStatus] = useState(null);
 
         const videoRef = useRef(null);
         const canvasRef = useRef(null);
@@ -151,12 +153,24 @@
           }
         }, [stream, view]);
 
-        /** スマホの高解像度PNGは数MBになりやすく、API/プロキシのボディ上限やモバイルのメモリで失敗するため縮小してJPEG化する */
-        const prepareImageForApi = (dataUrl) =>
+        // 画面を切り替えたときは先頭から表示する（前の画面のスクロール位置が残り、途中から表示されていた）
+        useEffect(() => {
+          window.scrollTo(0, 0);
+        }, [view, selectedHistoryItem]);
+
+        // 画面を閉じる・離れるときにカメラを確実に止める
+        useEffect(() => {
+          if (!stream) return;
+          const stop = () => stream.getTracks().forEach((t) => t.stop());
+          window.addEventListener('pagehide', stop);
+          return () => window.removeEventListener('pagehide', stop);
+        }, [stream]);
+
+        /** data URL を読み込み、長辺 maxSide px 以下に縮小した JPEG data URL を返す */
+        const resizeDataUrl = (dataUrl, maxSide, quality) =>
           new Promise((resolve, reject) => {
             const img = new Image();
             img.onload = () => {
-              const maxSide = 1280;
               let w = img.naturalWidth;
               let h = img.naturalHeight;
               if (!w || !h) return reject(new Error("INVALID_IMAGE"));
@@ -167,14 +181,46 @@
               c.width = w;
               c.height = h;
               c.getContext("2d").drawImage(img, 0, 0, w, h);
-              const out = c.toDataURL("image/jpeg", 0.85);
-              const base64 = out.split(",")[1];
-              if (!base64) return reject(new Error("INVALID_IMAGE"));
-              resolve({ mimeType: "image/jpeg", base64 });
+              resolve(c.toDataURL("image/jpeg", quality));
             };
             img.onerror = () => reject(new Error("INVALID_IMAGE"));
             img.src = dataUrl;
           });
+
+        /** スマホの高解像度PNGは数MBになりやすく、API/プロキシのボディ上限やモバイルのメモリで失敗するため縮小してJPEG化する */
+        const prepareImageForApi = async (dataUrl) => {
+          const out = await resizeDataUrl(dataUrl, 1280, 0.85);
+          const base64 = out.split(",")[1];
+          if (!base64) throw new Error("INVALID_IMAGE");
+          return { mimeType: "image/jpeg", base64 };
+        };
+
+        /**
+         * 履歴保存用のサムネイル。localStorage は約5MBしかないため、
+         * 元画像（数百KB〜数MB）をそのまま保存すると数件で上限に達し保存に失敗する。
+         */
+        const makeThumbnail = (dataUrl) => resizeDataUrl(dataUrl, 640, 0.75);
+
+        /**
+         * 履歴を localStorage に保存する。容量超過（QuotaExceededError）のときは
+         * 古い履歴から削って再試行し、保存できた配列を返す。解析結果そのものは失わせない。
+         */
+        const saveHistory = (items) => {
+          let list = items;
+          for (let i = 0; i < 40; i++) {
+            try {
+              localStorage.setItem('skin_analysis_history', JSON.stringify(list));
+              return list;
+            } catch (e) {
+              if (list.length <= 1) {
+                console.warn("履歴を保存できませんでした:", e);
+                return list;
+              }
+              list = list.slice(0, -1);
+            }
+          }
+          return list;
+        };
 
         const capturePhoto = async () => {
           const video = videoRef.current;
@@ -210,16 +256,21 @@
         };
 
         const handleFileUpload = (e) => {
-          const file = e.target.files[0];
+          const input = e.target;
+          const file = input.files && input.files[0];
+          // 同じファイルを続けて選んでも onChange が発火するようにリセット
+          input.value = "";
           if (file) {
             const reader = new FileReader();
             reader.onload = (event) => analyzeSkin(event.target.result);
+            reader.onerror = () => { setView('result'); setResult({ error: "画像の読み込みに失敗しました。別の画像で再試行してください。" }); };
             reader.readAsDataURL(file);
           }
         };
 
         const analyzeSkin = async (imageData) => {
           setAnalyzing(true);
+          setAnalyzeStatus(null);
           setView('result');
           stopCamera();
 
@@ -249,11 +300,19 @@
                     ] 
                   }],
                   systemInstruction: { parts: [{ text: systemPrompt }] },
-                  generationConfig: { responseMimeType: "application/json", maxOutputTokens: 1024 }
+                  // 1024 だと日本語の analysisDetail/advice が途中で切れて JSON が壊れることがある
+                  generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2048 }
                 })
               });
               
-              const resData = await res.json();
+              // 413 や 504 などは JSON 以外（HTML/テキスト）が返ることがある
+              const rawText = await res.text();
+              let resData = {};
+              try {
+                resData = rawText ? JSON.parse(rawText) : {};
+              } catch {
+                resData = { error: { message: rawText.slice(0, 200) || "API_ERROR" } };
+              }
               
               if (!res.ok) {
                 const errMsg = resData?.error?.message || resData?.error?.status || "APIエラー";
@@ -267,12 +326,20 @@
                   const retryAfterFromJson = resData?.error?.rateLimit?.retryAfter;
                   const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : Number(retryAfterFromJson);
 
-                  const suggestedDelayMs =
+                  const suggestedDelayMs = Math.min(
                     Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
                       ? retryAfterSeconds * 1000
-                      : delay;
+                      : delay,
+                    120000
+                  );
 
+                  setAnalyzeStatus(
+                    res.status === 429
+                      ? `AIが混雑しています。約${Math.ceil(suggestedDelayMs / 1000)}秒後に自動で再試行します…`
+                      : `AIサーバーが一時的に不安定です。約${Math.ceil(suggestedDelayMs / 1000)}秒後に自動で再試行します…`
+                  );
                   await new Promise(r => setTimeout(r, suggestedDelayMs));
+                  setAnalyzeStatus(null);
                   // 次回は伸ばしておく（同じ 1 分窓内で踏み続けないため）。
                   return fetchWithRetry(retries - 1, Math.min(suggestedDelayMs * 2, 120000));
                 }
@@ -302,18 +369,24 @@
               analysis.spotBreakdown = nextBreakdown;
             }
             const now = new Date();
+            // 表示・保存用は縮小したサムネイル（元画像を保存すると localStorage が数件で上限に達する）
+            let storedImage = imageData;
+            try {
+              storedImage = await makeThumbnail(imageData);
+            } catch (thumbErr) {
+              console.warn("サムネイル生成に失敗:", thumbErr);
+            }
             const newResult = { 
               ...analysis, 
               id: Date.now(), 
               displayDate: now.toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), 
               chartDate: `${now.getMonth() + 1}/${now.getDate()}`,
-              image: imageData 
+              image: storedImage 
             };
             
             setResult(newResult);
-            const updatedHistory = [newResult, ...history].slice(0, 30);
-            setHistory(updatedHistory);
-            localStorage.setItem('skin_analysis_history', JSON.stringify(updatedHistory));
+            // 保存に失敗しても解析結果の表示は成功扱いにする（保存側で古い履歴から自動削除）
+            setHistory((prev) => saveHistory([newResult, ...prev].slice(0, 30)));
           } catch (e) {
             let errorMsg = "解析中にエラーが発生しました。";
             if (e?.status === 401 || e?.status === 403) {
@@ -342,14 +415,14 @@
             setResult({ error: errorMsg, lastImage: imageData });
           } finally {
             setAnalyzing(false);
+            setAnalyzeStatus(null);
           }
         };
 
         const deleteHistory = (id, e) => {
           e.stopPropagation();
           const filtered = history.filter(h => h.id !== id);
-          setHistory(filtered);
-          localStorage.setItem('skin_analysis_history', JSON.stringify(filtered));
+          setHistory(saveHistory(filtered));
         };
 
         // 照明条件ヒント（開閉可能）
@@ -447,8 +520,9 @@
           );
         };
 
+        // 外枠に overflow-hidden を付けると sticky ヘッダーがスクロール時に固定されなくなるため overflow-x: clip を使う
         return (
-          <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 overflow-hidden relative">
+          <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 relative" style={{ overflowX: 'clip' }}>
             <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100/80">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg shadow-slate-900/25 ring-1 ring-slate-200/80 shrink-0">
@@ -457,10 +531,10 @@
                 <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">AI肌解析プロ</h1>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                <button aria-label="カメラ" onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
                   <Camera size={20} />
                 </button>
-                <button onClick={() => { stopCamera(); setView('history'); }} className={`p-2.5 rounded-xl transition-all ${view === 'history' || view === 'detail' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                <button aria-label="診断履歴" onClick={() => { stopCamera(); setView('history'); }} className={`p-2.5 rounded-xl transition-all ${view === 'history' || view === 'detail' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
                   <History size={20} />
                 </button>
               </div>
@@ -515,7 +589,7 @@
                         )}
                       </div>
                       <div className="flex flex-col items-center gap-6">
-                        <button onClick={capturePhoto} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
+                        <button aria-label="撮影して解析" onClick={capturePhoto} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
                         <button onClick={() => { stopCamera(); setStream(null); }} className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors">キャンセル</button>
                       </div>
                       <LightingTipsCard />
@@ -533,6 +607,9 @@
                       <div className="space-y-2">
                         <p className="text-xl font-black">AI解析中...</p>
                         <p className="text-slate-400 text-xs px-12">画像のピクセル単位でシミの分布を<br/>専門的にスキャンしています</p>
+                        {analyzeStatus && (
+                          <p className="text-amber-600 text-xs font-bold px-8 pt-2" role="status">{analyzeStatus}</p>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -644,7 +721,7 @@
                               <span className="text-xs font-bold text-rose-500">シミ: {parsePercentNumber(item.spotRatio)}%</span>
                             </div>
                           </div>
-                          <button onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-200 hover:text-rose-500 transition-colors">
+                          <button aria-label="この履歴を削除" onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-200 hover:text-rose-500 transition-colors">
                             <Trash2 size={18} />
                           </button>
                           <ChevronRight size={16} className="text-slate-300 group-hover:translate-x-1 transition-transform" />
