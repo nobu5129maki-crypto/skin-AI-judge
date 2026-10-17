@@ -104,6 +104,21 @@
         return `${Math.round(parsePercentNumber(val))}%`;
       }
 
+      /**
+       * 診断履歴の日時。同じ日の記録が複数あるときだけ日付と時刻、それ以外は日付のみ。
+       * compact のときはグラフ用に「10/17」「10/17 09:10」のように短くする。
+       */
+      function formatHistoryWhen(item, allItems, compact) {
+        const key = item?.chartDate || "";
+        const sameDay = !!key && (allItems || []).filter((x) => x && x.chartDate === key).length > 1;
+        const raw = String(item?.displayDate || "").trim();
+        const timeMatch = raw.match(/(\d{1,2}:\d{2})/);
+        const dateText = raw.replace(/\s*\d{1,2}:\d{2}.*$/, "").trim();
+        const dateLabel = compact ? (key || dateText) : (dateText || key);
+        if (sameDay && timeMatch) return dateLabel ? `${dateLabel} ${timeMatch[1]}` : timeMatch[1];
+        return dateLabel;
+      }
+
       /** 思考パートを除いた本文を連結する。parts[0] が思考だと JSON 解析に失敗する */
       function readModelText(data) {
         const parts = data?.candidates?.[0]?.content?.parts;
@@ -578,12 +593,7 @@
           const values = sortedData.map((item) =>
             parsePercentNumber(type === "tone" ? item.toneScore : item.spotRatio)
           );
-          const labels = sortedData.map((item) => {
-            const sameDay = sortedData.filter((x) => x.chartDate && x.chartDate === item.chartDate).length > 1;
-            const time = String(item.displayDate || "").match(/(\d{1,2}:\d{2})/);
-            if (sameDay && time) return time[1];
-            return item.chartDate || "";
-          });
+          const labels = sortedData.map((item) => formatHistoryWhen(item, data, true));
           
           const width = 320;
           const height = 140;
@@ -829,7 +839,7 @@
                         <div key={item.id} onClick={() => { setSelectedHistoryItem(item); setView('detail'); }} className="bg-white p-4 rounded-3xl flex items-center gap-4 shadow-sm border border-slate-100 hover:shadow-md transition-all cursor-pointer group">
                           <img src={item.image} className="w-14 h-14 rounded-xl object-cover ring-2 ring-slate-50" />
                           <div className="flex-1">
-                            <p className="text-[10px] font-black text-slate-500 uppercase mb-0.5">{item.displayDate}</p>
+                            <p className="text-[10px] font-black text-slate-500 mb-0.5">{formatHistoryWhen(item, history)}</p>
                             <div className="flex gap-4">
                               <span className="text-xs font-bold text-indigo-600">透明度: {formatPercent(item.toneScore)}</span>
                               <span className="text-xs font-bold text-rose-500">シミ: {formatPercent(item.spotRatio)}</span>
@@ -855,7 +865,7 @@
                     <img src={selectedHistoryItem.image} className="w-full aspect-[3/4] object-cover" />
                     <div className="p-8 space-y-8">
                       <div>
-                        <p className="text-[10px] font-bold text-indigo-600 tracking-widest uppercase mb-1">{selectedHistoryItem.displayDate}</p>
+                        <p className="text-[10px] font-bold text-indigo-600 tracking-widest mb-1">{formatHistoryWhen(selectedHistoryItem, history)}</p>
                         <h2 className="text-3xl font-black tracking-tight">詳細分析レポート</h2>
                       </div>
                       
