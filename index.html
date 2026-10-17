@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>AI肌解析プロ</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Favicon and PWA Icons（npm run generate-icons で生成） -->
@@ -100,6 +100,61 @@
         return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
       }
 
+      function formatPercent(val) {
+        return `${Math.round(parsePercentNumber(val))}%`;
+      }
+
+      /** 思考パートを除いた本文を連結する。parts[0] が思考だと JSON 解析に失敗する */
+      function readModelText(data) {
+        const parts = data?.candidates?.[0]?.content?.parts;
+        if (!Array.isArray(parts)) return "";
+        return parts
+          .filter((part) => part && part.thought !== true && typeof part.text === "string")
+          .map((part) => part.text)
+          .join("")
+          .trim();
+      }
+
+      function parseAnalysisJson(text) {
+        const cleaned = String(text || "").replace(/```json|```/gi, "").trim();
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (!match) throw new SyntaxError("JSON");
+        return JSON.parse(match[0]);
+      }
+
+      function cameraErrorMessage(err) {
+        const name = err?.name || "";
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          return "カメラの使用が許可されていません。ブラウザの設定でカメラを許可するか、写真を選択してください。";
+        }
+        if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          return "カメラが見つかりません。写真を選択して解析できます。";
+        }
+        if (name === "NotReadableError" || name === "TrackStartError") {
+          return "カメラを起動できません。ほかのアプリで使われていないか確認するか、写真を選択してください。";
+        }
+        if (name === "SecurityError" || !navigator.mediaDevices?.getUserMedia) {
+          return "この環境ではカメラを使えません。写真を選択してください。";
+        }
+        return "カメラの起動に失敗しました。設定を確認するか、写真を選択してください。";
+      }
+
+      function drawToJpeg(source, maxSide, quality) {
+        let w = source.naturalWidth || source.width;
+        let h = source.naturalHeight || source.height;
+        if (!w || !h) throw new Error("INVALID_IMAGE");
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        if (!ctx) throw new Error("INVALID_IMAGE");
+        ctx.drawImage(source, 0, 0, w, h);
+        return c.toDataURL("image/jpeg", quality);
+      }
+
       const App = () => {
         const [view, setView] = useState('camera');
         const [stream, setStream] = useState(null);
@@ -135,22 +190,30 @@
         const startCamera = async () => {
           setIsLoadingCamera(true);
           setCameraError(null);
+          if (!navigator.mediaDevices?.getUserMedia) {
+            setCameraError(cameraErrorMessage({ name: "SecurityError" }));
+            setIsLoadingCamera(false);
+            return;
+          }
           try {
             const res = await navigator.mediaDevices.getUserMedia({ 
               video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } 
             });
             setStream(res);
           } catch (err) {
-            setCameraError("カメラの起動に失敗しました。設定を確認してください。");
+            setStream(null);
+            setCameraError(cameraErrorMessage(err));
           } finally {
             setIsLoadingCamera(false);
           }
         };
 
         useEffect(() => {
-          if (stream && videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
+          const video = videoRef.current;
+          if (!stream || !video) return;
+          video.srcObject = stream;
+          const play = video.play?.();
+          if (play && typeof play.catch === "function") play.catch(() => {});
         }, [stream, view]);
 
         // 画面を切り替えたときは先頭から表示する（前の画面のスクロール位置が残り、途中から表示されていた）
@@ -171,21 +234,31 @@
           new Promise((resolve, reject) => {
             const img = new Image();
             img.onload = () => {
-              let w = img.naturalWidth;
-              let h = img.naturalHeight;
-              if (!w || !h) return reject(new Error("INVALID_IMAGE"));
-              const scale = Math.min(1, maxSide / Math.max(w, h));
-              w = Math.round(w * scale);
-              h = Math.round(h * scale);
-              const c = document.createElement("canvas");
-              c.width = w;
-              c.height = h;
-              c.getContext("2d").drawImage(img, 0, 0, w, h);
-              resolve(c.toDataURL("image/jpeg", quality));
+              try { resolve(drawToJpeg(img, maxSide, quality)); }
+              catch (err) { reject(err); }
             };
             img.onerror = () => reject(new Error("INVALID_IMAGE"));
             img.src = dataUrl;
           });
+
+        /** 大きな写真を data URL に全部載せず、向きを補正してから縮小する */
+        const fileToJpegDataUrl = async (file) => {
+          if (typeof createImageBitmap === "function") {
+            try {
+              const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+              try { return drawToJpeg(bmp, 1280, 0.85); }
+              finally { bmp.close?.(); }
+            } catch (err) {
+              console.warn("createImageBitmap に失敗:", err);
+            }
+          }
+          const url = URL.createObjectURL(file);
+          try {
+            return await resizeDataUrl(url, 1280, 0.85);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        };
 
         /** スマホの高解像度PNGは数MBになりやすく、API/プロキシのボディ上限やモバイルのメモリで失敗するため縮小してJPEG化する */
         const prepareImageForApi = async (dataUrl) => {
@@ -255,16 +328,23 @@
           analyzeSkin(small.toDataURL("image/jpeg", 0.85));
         };
 
-        const handleFileUpload = (e) => {
+        const handleFileUpload = async (e) => {
           const input = e.target;
           const file = input.files && input.files[0];
           // 同じファイルを続けて選んでも onChange が発火するようにリセット
           input.value = "";
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => analyzeSkin(event.target.result);
-            reader.onerror = () => { setView('result'); setResult({ error: "画像の読み込みに失敗しました。別の画像で再試行してください。" }); };
-            reader.readAsDataURL(file);
+          if (!file) return;
+          if (file.type && !file.type.startsWith("image/")) {
+            setView('result');
+            setResult({ error: "画像ファイルを選択してください。" });
+            return;
+          }
+          try {
+            const dataUrl = await fileToJpegDataUrl(file);
+            analyzeSkin(dataUrl);
+          } catch (err) {
+            setView('result');
+            setResult({ error: "この画像は読み込めませんでした。JPEGまたはPNGでお試しください。" });
           }
         };
 
@@ -275,23 +355,25 @@
           stopCamera();
 
           const systemPrompt = `
-            あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONで返答してください。analysisDetail と advice は必ず日本語で記述してください。
+            あなたは世界トップレベルの美容皮膚科専門医です。提供された画像を詳細に解析し、以下の項目を含むJSONだけを返してください。説明文やMarkdownは不要です。analysisDetail と advice は必ず日本語で記述してください。
             数値フィールドには必ず0〜100の「数値のみ」を入れ、%記号や文字列（例: "60%"）は絶対に使わないこと。
-            1. spotRatio: シミ・くすみの深刻度（0-100の数値）
-            2. toneScore: 肌の透明感・明るさ（0-100の数値）
-            3. spotBreakdown: { "老人性色素斑": 数値, "肝斑": 数値, "そばかす": 数値, "炎症後色素沈着": 数値 } — 各キーは0-100の数値。シミタイプごとの寄与度の目安。合計が100になる必要はない。
-            4. analysisDetail: 専門的な解析結果（日本語で）。
-            5. advice: 具体的なスキンケア、成分、生活習慣のアドバイス（日本語で）。
+            1. hasSkin: 顔または素肌が判定できるとき true。風景・物・文字など肌が写っていないときだけ false。
+            2. spotRatio: シミ・くすみの深刻度（0-100の数値）。hasSkin が false のときは 0。
+            3. toneScore: 肌の透明感・明るさ（0-100の数値）。hasSkin が false のときは 0。
+            4. spotBreakdown: { "老人性色素斑": 数値, "肝斑": 数値, "そばかす": 数値, "炎症後色素沈着": 数値 } — 各キーは0-100の数値。シミタイプごとの寄与度の目安。合計が100になる必要はない。
+            5. analysisDetail: 専門的な解析結果（日本語で）。hasSkin が false のときは、撮り直し方を一文で書く。
+            6. advice: 具体的なスキンケア、成分、生活習慣のアドバイス（日本語で）。文章は最後まで書き切ること。
           `;
 
           try {
             const { mimeType: imageMime, base64: base64Image } =
               await prepareImageForApi(imageData);
             
-            const fetchWithRetry = async (retries = 5, delay = 20000) => {
+            const fetchWithRetry = async (retries = 2, delay = 4000) => {
               const res = await fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(50000) : undefined,
                 body: JSON.stringify({
                   contents: [{ 
                     parts: [
@@ -300,8 +382,7 @@
                     ] 
                   }],
                   systemInstruction: { parts: [{ text: systemPrompt }] },
-                  // 1024 だと日本語の analysisDetail/advice が途中で切れて JSON が壊れることがある
-                  generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2048 }
+                  generationConfig: { responseMimeType: "application/json", maxOutputTokens: 4096 }
                 })
               });
               
@@ -346,15 +427,31 @@
                 throw err;
               }
               
-              if (!resData?.candidates?.[0]?.content?.parts?.[0]?.text) {
+              if (resData?.promptFeedback?.blockReason) {
+                throw new Error("SAFETY_BLOCK");
+              }
+              const modelText = readModelText(resData);
+              if (!modelText) {
                 const blockReason = resData?.candidates?.[0]?.finishReason || "不明";
                 throw new Error(blockReason === "SAFETY" ? "SAFETY_BLOCK" : "EMPTY_RESPONSE");
               }
+              if (resData?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+                try { parseAnalysisJson(modelText); }
+                catch { throw new Error("TRUNCATED_JSON"); }
+              }
+              resData.__modelText = modelText;
               return resData;
             };
 
             const data = await fetchWithRetry();
-            const analysis = JSON.parse(data.candidates[0].content.parts[0].text);
+            const analysis = parseAnalysisJson(data.__modelText);
+            if (analysis.hasSkin === false) {
+              setResult({
+                error: analysis.analysisDetail || "顔または肌が写っていません。明るい場所で正面から撮り直してください。",
+                lastImage: imageData,
+              });
+              return;
+            }
             if (analysis.spotRatio != null) {
               analysis.spotRatio = parsePercentNumber(analysis.spotRatio);
             }
@@ -404,7 +501,11 @@
             } else if (e?.message?.includes("CONFIGURATION_ERROR") || e?.message?.includes("APIキーが未設定")) {
               errorMsg = "APIキーが未設定です。Vercelの環境変数 GEMINI_API_KEY を設定してください。";
             } else if (e?.message === "INVALID_IMAGE" || e?.message === "EMPTY_RESPONSE") {
-              errorMsg = "画像の読み込みに失敗しました。別の画像で再試行してください。";
+              errorMsg = "画像の読み込みに失敗しました。JPEGまたはPNGで、顔が写った写真を選んでください。";
+            } else if (e?.message === "TRUNCATED_JSON") {
+              errorMsg = "AIの応答が途中で切れました。もう一度お試しください。";
+            } else if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+              errorMsg = "解析がタイムアウトしました。時間を置いて再試行してください。";
             } else if (e?.message?.includes("Failed to fetch") || e?.message?.includes("NetworkError")) {
               errorMsg = "ネットワークエラーです。接続を確認して再試行してください。";
             } else if (e instanceof SyntaxError || e?.message?.includes("JSON")) {
@@ -438,7 +539,7 @@
                 </div>
                 <div>
                   <p className="font-bold text-slate-700 text-sm">より正確な解析のための照明のコツ</p>
-                  <p className="text-xs text-slate-400">タップして詳細を表示</p>
+                  <p className="text-xs text-slate-400">{showLightingTips ? "タップして閉じる" : "タップして詳細を表示"}</p>
                 </div>
               </div>
               <ChevronDown size={20} className={`text-slate-400 transition-transform ${showLightingTips ? 'rotate-180' : ''}`} />
@@ -472,11 +573,17 @@
         const TrendChart = ({ data, type }) => {
           if (!data || data.length < 2) return null;
           
-          const sortedData = [...data].reverse(); // 古い順
+          const recent = data.slice(0, 8);
+          const sortedData = [...recent].reverse(); // 古い順
           const values = sortedData.map((item) =>
             parsePercentNumber(type === "tone" ? item.toneScore : item.spotRatio)
           );
-          const labels = sortedData.map(item => item.chartDate);
+          const labels = sortedData.map((item) => {
+            const sameDay = sortedData.filter((x) => x.chartDate && x.chartDate === item.chartDate).length > 1;
+            const time = String(item.displayDate || "").match(/(\d{1,2}:\d{2})/);
+            if (sameDay && time) return time[1];
+            return item.chartDate || "";
+          });
           
           const width = 320;
           const height = 140;
@@ -523,7 +630,7 @@
         // 外枠に overflow-hidden を付けると sticky ヘッダーがスクロール時に固定されなくなるため overflow-x: clip を使う
         return (
           <div className="max-w-md mx-auto min-h-screen flex flex-col shadow-2xl bg-slate-50 relative" style={{ overflowX: 'clip' }}>
-            <header className="glass-card sticky top-0 z-30 px-6 py-4 flex justify-between items-center border-b border-slate-100/80">
+            <header className="glass-card sticky top-0 z-30 px-6 pb-4 flex justify-between items-center border-b border-slate-100/80" style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}>
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg shadow-slate-900/25 ring-1 ring-slate-200/80 shrink-0">
                   <img src="/favicon.svg" alt="" width={40} height={40} className="w-full h-full object-cover" />
@@ -531,10 +638,10 @@
                 <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">AI肌解析プロ</h1>
               </div>
               <div className="flex gap-2">
-                <button aria-label="カメラ" onClick={() => { stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                <button aria-label="カメラ" disabled={analyzing} onClick={() => { if (analyzing || view === 'camera') return; stopCamera(); setView('camera'); }} className={`p-2.5 rounded-xl transition-all disabled:opacity-40 ${view === 'camera' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
                   <Camera size={20} />
                 </button>
-                <button aria-label="診断履歴" onClick={() => { stopCamera(); setView('history'); }} className={`p-2.5 rounded-xl transition-all ${view === 'history' || view === 'detail' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
+                <button aria-label="診断履歴" disabled={analyzing} onClick={() => { if (analyzing) return; stopCamera(); setSelectedHistoryItem(null); setView('history'); }} className={`p-2.5 rounded-xl transition-all disabled:opacity-40 ${view === 'history' || view === 'detail' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-100'}`}>
                   <History size={20} />
                 </button>
               </div>
@@ -552,6 +659,11 @@
                         <h2 className="text-2xl font-black mb-2 tracking-tight">肌の状態をチェック</h2>
                         <p className="text-slate-400 text-sm leading-relaxed px-6">AIがシミ、くすみ、透明感を解析し<br/>最適なケアプランを作成します</p>
                       </div>
+                      {cameraError && (
+                        <div role="alert" className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-left text-sm font-bold text-rose-600">
+                          {cameraError}
+                        </div>
+                      )}
                       <LightingTipsCard />
                       <div className="grid gap-4 pt-4">
                         <button onClick={startCamera} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 hover:scale-[1.02] active:scale-95 transition-all">
@@ -562,7 +674,7 @@
                             <History size={24} className="mb-2 text-indigo-500" />
                             <span className="text-xs">履歴を見る</span>
                           </button>
-                          <button onClick={() => fileInputRef.current.click()} className="flex flex-col items-center justify-center py-6 bg-white rounded-2xl font-bold border border-slate-100 hover:bg-slate-50 transition-all">
+                          <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center py-6 bg-white rounded-2xl font-bold border border-slate-100 hover:bg-slate-50 transition-all">
                             <Upload size={24} className="mb-2 text-indigo-500" />
                             <span className="text-xs">写真を選択</span>
                           </button>
@@ -589,8 +701,10 @@
                         )}
                       </div>
                       <div className="flex flex-col items-center gap-6">
-                        <button aria-label="撮影して解析" onClick={capturePhoto} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all"></button>
-                        <button onClick={() => { stopCamera(); setStream(null); }} className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors">キャンセル</button>
+                        {stream && !cameraError && (
+                          <button aria-label="撮影して解析" onClick={capturePhoto} disabled={isLoadingCamera} className="w-20 h-20 rounded-full bg-white border-[6px] border-indigo-600 shadow-2xl active:scale-90 transition-all disabled:opacity-40"></button>
+                        )}
+                        <button onClick={() => { stopCamera(); setCameraError(null); }} className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-rose-500 transition-colors">キャンセル</button>
                       </div>
                       <LightingTipsCard />
                     </div>
@@ -641,11 +755,11 @@
                             <div className="grid grid-cols-2 gap-4">
                               <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100">
                                 <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度スコア <ArrowUpRight size={10}/></p>
-                                <p className="text-4xl font-black text-indigo-600 leading-none">{parsePercentNumber(result?.toneScore)}</p>
+                                <p className="text-4xl font-black text-indigo-600 leading-tight">{formatPercent(result?.toneScore)}</p>
                               </div>
                               <div className="bg-rose-50 p-5 rounded-3xl border border-rose-100">
                                 <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ深刻度 <ArrowDownRight size={10}/></p>
-                                <p className="text-4xl font-black text-rose-600 leading-none">{parsePercentNumber(result?.spotRatio)}%</p>
+                                <p className="text-4xl font-black text-rose-600 leading-tight">{formatPercent(result?.spotRatio)}</p>
                               </div>
                             </div>
 
@@ -715,13 +829,13 @@
                         <div key={item.id} onClick={() => { setSelectedHistoryItem(item); setView('detail'); }} className="bg-white p-4 rounded-3xl flex items-center gap-4 shadow-sm border border-slate-100 hover:shadow-md transition-all cursor-pointer group">
                           <img src={item.image} className="w-14 h-14 rounded-xl object-cover ring-2 ring-slate-50" />
                           <div className="flex-1">
-                            <p className="text-[10px] font-black text-slate-300 uppercase mb-0.5">{item.displayDate}</p>
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-0.5">{item.displayDate}</p>
                             <div className="flex gap-4">
-                              <span className="text-xs font-bold text-indigo-600">透明度: {parsePercentNumber(item.toneScore)}</span>
-                              <span className="text-xs font-bold text-rose-500">シミ: {parsePercentNumber(item.spotRatio)}%</span>
+                              <span className="text-xs font-bold text-indigo-600">透明度: {formatPercent(item.toneScore)}</span>
+                              <span className="text-xs font-bold text-rose-500">シミ: {formatPercent(item.spotRatio)}</span>
                             </div>
                           </div>
-                          <button aria-label="この履歴を削除" onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-200 hover:text-rose-500 transition-colors">
+                          <button aria-label="この履歴を削除" onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-400 hover:text-rose-500 transition-colors">
                             <Trash2 size={18} />
                           </button>
                           <ChevronRight size={16} className="text-slate-300 group-hover:translate-x-1 transition-transform" />
@@ -748,13 +862,33 @@
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-5 bg-indigo-50 rounded-3xl border border-indigo-100">
                           <p className="text-[10px] font-black text-indigo-400 uppercase mb-1 flex items-center gap-1">透明度 <ArrowUpRight size={10}/></p>
-                          <p className="text-4xl font-black text-indigo-600 leading-none">{parsePercentNumber(selectedHistoryItem.toneScore)}</p>
+                          <p className="text-4xl font-black text-indigo-600 leading-tight">{formatPercent(selectedHistoryItem.toneScore)}</p>
                         </div>
                         <div className="p-5 bg-rose-50 rounded-3xl border border-rose-100">
                           <p className="text-[10px] font-black text-rose-400 uppercase mb-1 flex items-center gap-1">シミ指標 <ArrowDownRight size={10}/></p>
-                          <p className="text-4xl font-black text-rose-600 leading-none">{parsePercentNumber(selectedHistoryItem.spotRatio)}%</p>
+                          <p className="text-4xl font-black text-rose-600 leading-tight">{formatPercent(selectedHistoryItem.spotRatio)}</p>
                         </div>
                       </div>
+
+                      {selectedHistoryItem.spotBreakdown && (
+                        <div className="space-y-4">
+                          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><List size={14}/> シミの内訳（推測値）</h3>
+                          {Object.entries(selectedHistoryItem.spotBreakdown).map(([name, val]) => {
+                            const pct = parsePercentNumber(val);
+                            return (
+                              <div key={name}>
+                                <div className="flex justify-between text-[11px] font-bold mb-1.5 text-slate-600">
+                                  <span>{name}</span>
+                                  <span>{pct}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }}></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
                       <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
                         <h4 className="font-black text-xs mb-3 flex items-center gap-2 text-indigo-600 uppercase tracking-widest"><Activity size={16}/> 専門的診断</h4>

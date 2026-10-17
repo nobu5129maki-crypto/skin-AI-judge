@@ -1,12 +1,42 @@
 /**
  * Vercel Serverless Function: Gemini API プロキシ
  * APIキーはサーバー側の環境変数 GEMINI_API_KEY に格納（クライアントに露出しない）
+ *
+ * 先頭は最新の Flash。混雑・未提供・思考設定の非対応時だけ次のモデルへ落とす。
  */
 const MODEL_CANDIDATES = [
-  "gemini-3.1-flash-lite",
-  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
   "gemini-3.6-flash",
+  "gemini-3.5-flash-lite",
 ];
+
+function buildPayload(body, model, useThinking) {
+  const clientConfig =
+    body.generationConfig && typeof body.generationConfig === "object"
+      ? body.generationConfig
+      : {};
+  const generationConfig = {
+    ...clientConfig,
+    responseMimeType: "application/json",
+    maxOutputTokens: Math.max(Number(clientConfig.maxOutputTokens) || 0, 4096),
+  };
+  if (useThinking) {
+    generationConfig.thinkingConfig = { thinkingLevel: "low" };
+  } else {
+    delete generationConfig.thinkingConfig;
+  }
+  return JSON.stringify({
+    contents: body.contents,
+    systemInstruction: body.systemInstruction || undefined,
+    generationConfig,
+  });
+}
+
+function isThinkingConfigError(status, data) {
+  if (status !== 400) return false;
+  const message = String(data?.error?.message || data?.message || "");
+  return /thinking/i.test(message) && !/image/i.test(message);
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -31,7 +61,7 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const { contents, systemInstruction, generationConfig } = body;
+    const { contents } = body || {};
 
     if (!contents) {
       return res.status(400).json({
@@ -39,33 +69,42 @@ export default async function handler(req, res) {
       });
     }
 
-    const payload = JSON.stringify({
-      contents,
-      systemInstruction: systemInstruction || undefined,
-      generationConfig: generationConfig || { responseMimeType: "application/json" },
-    });
-
-    // 先頭モデルが 429（無料枠上限）/ 404（提供終了）/ 503（混雑）のときは予備モデルで再試行する
     let geminiRes;
     let data;
+    let modelUsed = MODEL_CANDIDATES[0];
+
     for (let i = 0; i < MODEL_CANDIDATES.length; i++) {
       const model = MODEL_CANDIDATES[i];
-      geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: payload }
-      );
-      try {
-        data = await geminiRes.json();
-      } catch {
-        data = { error: { message: await geminiRes.text().catch(() => "API_ERROR") } };
+      modelUsed = model;
+      const attempts = [true, false];
+      for (let attempt = 0; attempt < attempts.length; attempt++) {
+        const useThinking = attempts[attempt];
+        geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: buildPayload(body, model, useThinking),
+          }
+        );
+        try {
+          data = await geminiRes.json();
+        } catch {
+          data = { error: { message: await geminiRes.text().catch(() => "API_ERROR") } };
+        }
+        if (geminiRes.ok) break;
+        if (useThinking && isThinkingConfigError(geminiRes.status, data)) {
+          console.warn(`[api/analyze] model=${model} thinking非対応 -> 思考なしで再試行`);
+          continue;
+        }
+        break;
       }
+
       const retryable = [429, 404, 503].includes(geminiRes.status);
       if (geminiRes.ok || !retryable || i === MODEL_CANDIDATES.length - 1) break;
       console.warn(`[api/analyze] model=${model} status=${geminiRes.status} -> 次のモデルで再試行`);
     }
 
-    // Rate limit / quota 系の原因切り分け用に、Gemini が返すヘッダをそのまま返す。
-    // これによりフロント側で `retry-after` に応じた待機をできるようにする。
     const geminiHeaders = Object.fromEntries(geminiRes.headers.entries());
     const retryAfter = geminiHeaders["retry-after"];
     const xRateLimitHeaders = Object.fromEntries(
@@ -77,7 +116,6 @@ export default async function handler(req, res) {
         res.setHeader("retry-after", retryAfter);
       }
 
-      // 既存のレスポンス形を壊さないため、error 部分だけ補足する。
       const originalError =
         data && typeof data === "object" && data.error && typeof data.error === "object"
           ? data.error
@@ -87,6 +125,7 @@ export default async function handler(req, res) {
         ...data,
         error: {
           ...originalError,
+          model: modelUsed,
           rateLimit: {
             retryAfter,
             headers: xRateLimitHeaders,
@@ -95,6 +134,7 @@ export default async function handler(req, res) {
       });
     }
 
+    res.setHeader("x-skin-model", modelUsed);
     return res.status(200).json(data);
   } catch (e) {
     console.error("[api/analyze]", e);
