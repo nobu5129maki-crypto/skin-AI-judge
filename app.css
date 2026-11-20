@@ -1,0 +1,7 @@
+.animate-in { animation: fadeIn 0.5s ease-out; }
+.animate-spin { animation: spin 1s linear infinite; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.gradient-bg { background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 42%, #0e7490 100%); }
+.glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
+body { -webkit-tap-highlight-color: transparent; }
