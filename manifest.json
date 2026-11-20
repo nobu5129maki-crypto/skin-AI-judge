@@ -1,20 +1,45 @@
 {
-  "name": "AI Skin Analyzer Pro",
-  "short_name": "Skin AI Pro",
-  "description": "AI-powered skin analysis and care recommendations",
-  "start_url": "/",
-  "scope": "/",
+  "name": "AI肌解析プロ",
+  "short_name": "肌解析プロ",
+  "description": "AIが肌の状態を解析し、ケアの目安を出します",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f8fafc",
   "theme_color": "#6366f1",
   "icons": [
-    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
-    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"}
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
-  "categories": ["health", "lifestyle", "medical"],
+  "categories": [
+    "health",
+    "lifestyle",
+    "medical"
+  ],
   "lang": "ja",
-  "dir": "ltr"
+  "dir": "ltr",
+  "id": "./"
 }
